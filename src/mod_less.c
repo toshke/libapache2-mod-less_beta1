@@ -94,7 +94,7 @@ static int less_handler(request_rec* r)
 	if (r->method_number != M_GET)
 	return HTTP_METHOD_NOT_ALLOWED;
 
-	asprintf(&lessfilename, "%s.less", r->filename);
+	asprintf(&lessfilename, "%s_compiled.css", r->filename);
 	asprintf(&command, "lessc %s > %s", r->filename, lessfilename);
 
 	if (!file_exists(lessfilename)){
