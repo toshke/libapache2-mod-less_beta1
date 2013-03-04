@@ -30,6 +30,9 @@
 #include <sys/stat.h>
 
 
+#define info_log(s,ERROR,args...) ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, ERROR, args);
+
+
 char static *source = NULL;
 
 int file_exists(const char * filename)
@@ -44,28 +47,46 @@ int file_exists(const char * filename)
 }
 
 
-int read_file(const char * filename){
+int read_file(const char * filename, request_rec* r){
 	long bufsize;
 	int count;
 	int error = 0;
+	char* message;
 	FILE * fp = fopen(filename, "r");
 	if (fp != NULL) {
-		if (fseek(fp, 0L, SEEK_END) == 0) {
-			bufsize = ftell(fp);
+		if (fseek(fp, -1L, SEEK_END) == 0) {
+			bufsize = ftell(fp) + 1;
 			if (bufsize == -1) 
 				error = -1 ;
 	
+		//	asprintf(&message,"File %s size: %ld",filename,bufsize);
+			info_log(r->server,"File %s size: %ld", filename, bufsize);
+
 			source = malloc(sizeof(char) * (bufsize + 1));
+			
+			
+
+
+			if(source == NULL){
+				info_log(r->server,"Memory not allocated!",NULL);		   
+				//TODO LOG ERROR FROM MEMORY ALLOCATION
+			} else {
+				
+				info_log(r->server,"Memory allocated!",NULL);		   
+			}
 
 			if (fseek(fp, 0L, SEEK_SET) == 0) 
 				error = -1; 
 
 			size_t newLen = fread(source, sizeof(char), bufsize, fp);
 
+			info_log(r->server,"Read %u bytes from file",newLen);
+
+
 			if (newLen == 0) {
 				error = -1;
 			} else {
-				source[++newLen] = '\0';
+				source[newLen] = '\0';
 			}
 		}
 
@@ -110,7 +131,7 @@ static int less_handler(request_rec* r)
 		if ((stat(r->filename,&info) == 0) && (stat(lessfilename,&lessinfo) == 0) && (info.st_mtime > lessinfo.st_mtime))
 			status = system(command);
 		
-		if ((error = read_file(lessfilename)) != 1){
+		if ((error = read_file(lessfilename,r)) != 1){
 			ap_set_content_type(r, "text/css");
         		ap_rputs(source,r);
 			free(source);
