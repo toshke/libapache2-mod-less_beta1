@@ -24,6 +24,8 @@
   *  5) Improvement: Cache dependency maps using shm and/or mmap between requests. 
   *     No need to parse all files upon each request (This modules is not intended for 
   *     production use anyway, so this is lower priority
+  *  6) resolve @import dependenices file paths through apache api rather than building file path directly
+  *  7) Log all above to github issues section
   */
  
 #include "httpd.h"
