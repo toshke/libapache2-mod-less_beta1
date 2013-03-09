@@ -60,9 +60,119 @@ typedef struct data_list {
 	struct list_member* last;
 } data_list;
 
+typedef struct int_array {
+	int* start;
+	int size; /* Acutal size of allcoated memory */
+	int used_size; /* Used size */
+	int initial_size;
+} int_array;
 
 char static *source = NULL;
 const static server_rec  *server = NULL;
+
+/**
+	Initialized array of integers
+**/
+int_array* int_array_init(){
+	int_array* array;
+	
+	array = malloc(sizeof(int_array));
+	array->size = 0;
+	array->used_size = 0;
+	array->initial_size = 8;
+	return array;
+}
+
+/**
+	Adds number to array. If array is filled, array size is doubled.
+	Returns new array size upon success, -1 on failure
+**/
+int int_array_add(int_array* array, int number){
+	int new_size;
+	//info_log("IN. Used: %d. Size: %d",array->used_size,array->size);
+	if(array->size == array->used_size){
+		new_size = array->size == 0 ? array->initial_size : (array->size) *2;
+		//info_log("Extending buffer size to %d", new_size);
+		array->start = (int*) realloc(array->start,sizeof(int) * new_size );
+		if(array->start == NULL){
+			return -1;
+		}
+		array->size = new_size;
+		//info_log("Extended buffer size to %d", array->size);
+	}
+	//info_log("Add %d to arr. Used: %d. Size: %d",number,array->used_size,array->size);
+	//write to actual memory locaiton
+	*(array->start + array->used_size) =  number;
+	
+	//increase number of used memory locations
+	array->used_size++;
+	//info_log("OUT. Used: %d. Size: %d",array->used_size,array->size);
+	return array->used_size;
+}
+
+/**
+	Performs linear search on array. Returns position if needle, found, -1 if not
+**/
+int int_array_find(int_array* haystack,int needle){
+	int i=0;
+	if(haystack == NULL){
+		return -1;
+	}
+	for(i=0;i<haystack->used_size;i++){
+		
+		if(*(haystack->start + i) == needle){
+			return i;
+		}
+	}
+	return -1;
+}
+
+/**
+	Clears memory taken by int array
+**/
+void int_array_destroy(int_array* array){
+	free(array->start);
+	free(array);
+}
+
+char* int_array_to_string(int_array* array){
+	//buffer size for string representation is 2(brackets) + 2 * n (for comas and spaces) + 10 * n, considering 
+	// fact that integer goes anywhere between +-2billions (10numbers max) + 1 for terminating null
+	char *buffer;
+	int i;
+	
+	char number_buffer[11];
+	buffer = malloc(sizeof(char) * (3 + 12 * array->used_size));
+	buffer[0] = '\0';
+	strcat(buffer,"[");
+	for(i=0;i < array->used_size; i++){
+		sprintf(number_buffer,"%d",(array->start)[i]);
+		strcat(buffer,number_buffer);
+		if(i < array->used_size -1)
+			strcat(buffer,", ");
+	}
+	strcat(buffer,"]");
+	
+	
+	return buffer;
+}
+
+void test_int_array(){
+	int_array* arr = int_array_init();
+    char* arr_str;
+	int i=0;
+	for( i = 2;i<100;i+=2){
+		int_array_add(arr,i);
+	}
+	for(i=2;i<100;i++){
+		if(int_array_find(arr,i)>=0){ info_log("Found %d at %d",i,int_array_find(arr,i));}else {info_log("%d not found",i);}
+	}
+	arr_str = int_array_to_string(arr);
+	info_log("%s",arr_str);
+	free(arr_str);
+}
+
+
 
 /*
 	Initialized data list. String lists are as simple as it gets, double linked lists with head & tail
@@ -123,97 +233,6 @@ list_member* data_list_add_string(data_list* list, char* string){
 }
 
 
-list_member* data_list_add_number_sorted(data_list* list, int number){
-	list_member* left;
-	list_member* right;
-	list_member* new;
-	
-	new = malloc(sizeof(data_list));
-	if(new == NULL){
-		info_log("Add number sorted to list failed",NULL); 
-	}
-	
-	new->type = NUMBER;
-	new->data.number = number;
-	new->next = new->prev = NULL;
-	
-	if(list == NULL){ 
-		return ;
-	}
-	
-	if(list->size == 0){
-		list->first = list->last = new;
-		list->size = 1;
-		return;
-	}
-	
-	//make it a head
-	if(list->first->data.number > number){
-		new->next = list->first;
-		list->first->prev = new;
-		list->first = new;
-		list->size++;
-		return;
-	} 
-	
-	//make it a tail
-	if(list->last->data.number < number){		
-		new->prev = list->last;
-		list->last->next = new;
-		list->last = new;
-		list->size++;
-		return;
-	}
-	
-	
-	//determine where to put new element is more than two elements in list
-	left = list->first;
-	right = left->next;
-	//right should neve be NULL 'cause of previous statements, we're walking within inner bounds here
-	//still, for security reasons, leavin condition
-	while(right != NULL && left->data.number < number){
-		right = right->next;
-		left = right->prev;
-	}	
-	left->next = new;
-	right->prev = new;
-	
-	new->prev = left;
-	new->next = right;
-	
-	list->size++;
-	return new;	
-}
-
-
-void data_list_print_members(data_list* list){
-	list_member* member;
-	//this is test method anyway, so just allocating 1KB for string to be printed
-	char message[1024];
-	char temp_number[20];
-	char* current;
-	if(list == NULL || list->first == NULL) {		
-		return;
-	}
-	
-	strcpy(message,"[");
-	
-    member	= list->first;
-	do{
-		info_log("here %s",member->type == STRING ? "num" : "str");
-		if(member->type == NUMBER){
-			sprintf(temp_number,"%d",member->data.number);
-			current = temp_number;
-		} else{
-			current = member->data.string;
-		}		
-		strcat(message,current);
-		strcat(message," | ");
-	}while((member = member->next) != NULL);
-	info_log(message,NULL);
-}
-
-
 void data_list_print_all(data_list* list,char* format_string){
 	list_member* member;
 	
@@ -249,7 +268,6 @@ char* directory_name(char* filename,int trailing_slash){
 	return directory_name;
 }
 
-
 int file_exists(const char * filename)
 {
     FILE * file = fopen(filename, "r");
@@ -260,7 +278,6 @@ int file_exists(const char * filename)
     }
     return 0;
 }
-
 
 char* read_file(const char * filename){
 	long bufsize;
@@ -301,7 +318,6 @@ char* read_file(const char * filename){
 	return NULL;
 }
 
-
 /**
 	Scans loaded file for @import, @import-once and @import-multiple versions
 	strlen(@import) = 7
@@ -309,7 +325,7 @@ char* read_file(const char * filename){
 	strlen(@import-multiple) =  16
 	
 **/
-int scan_less_file_for_dependencies(char* less_file_name,data_list* dependencies_list ){
+int scan_less_file_for_dependencies(char* less_file_name,data_list* dependencies_list,int_array* scanned_inodes ){
 	int left=0,
 	right=6,
 	length=16,
@@ -317,8 +333,21 @@ int scan_less_file_for_dependencies(char* less_file_name,data_list* dependencies
 	i=0;
 	char* less_source;
 	char* dirname;
+	struct stat file_info;
 	
+	if(stat(less_file_name,&file_info) != 0){
+		//file does not exist at all
+		//TODO log warning 
+		return; 
+	}
 	
+	if(int_array_find(scanned_inodes,(int)file_info.st_ino) >= 0){
+		info_log("Skipped scanned file: %s with inode:%d", less_file_name,(int)file_info.st_ino);
+		return;
+	} else {
+		int_array_add(scanned_inodes, (int)file_info.st_ino);
+		info_log("Added file: %s with inode: %d", less_file_name,(int)file_info.st_ino);
+	} 
 	
 	dirname = directory_name(less_file_name,0);
 	less_source = read_file(less_file_name);
@@ -328,23 +357,34 @@ int scan_less_file_for_dependencies(char* less_file_name,data_list* dependencies
 	}
 	
 	buffer_size = strlen(less_source);
-			info_log("Scanning %s for deps",less_file_name);
-	while(right < buffer_size){		
-		detect_dependencies(left,right,less_source, dependencies_list, dirname);		
-		right++;
-		if(right - left > length){
-			left++;
+	while(right < buffer_size){
+		//if dependency detect, make enf of current region beginning of next one
+		if(detect_dependencies(left,right,less_source, dependencies_list, dirname,scanned_inodes)){
+			left=right;
+			right+=length;
+		} else {
+			right++;		
+			if(right - left > length){
+				left++;
+			}
 		}
+	
 	}
 
 	free(less_source);	
 	free(dirname);	
 }
 
-int detect_dependencies(int left_ptr,int right_ptr,char* stream,data_list* dependencies_list,char* root){
-	char* patterns[] = { "@import", "@import-once", "@import-multiple" };
+int detect_dependencies(int left_ptr,
+						int right_ptr,
+						char* stream,
+						data_list* dependencies_list,
+						char* root,
+						int_array* already_scanned){
+	char* patterns[] = { "@import ", "@import-once", "@import-multiple" };
 	int i=0,j=0,k=0,source_length=0, pattern_length=0;
 	char dependency[160];
+	
 	source_length = strlen(stream);
 	
 	for(i=0;i<3;i++){
@@ -358,6 +398,7 @@ int detect_dependencies(int left_ptr,int right_ptr,char* stream,data_list* depen
 			  
 		}
 		if(j == pattern_length){
+			i=3;
 			char state = '\0',c = '\0';
 
 			while((c = stream[left_ptr+j]) != ';' && left_ptr + (j++) < source_length){
@@ -385,16 +426,16 @@ int detect_dependencies(int left_ptr,int right_ptr,char* stream,data_list* depen
 				free(full_dependency_name);
 				asprintf(&full_dependency_name,"%s/%s%s",root,dependency,".less");
 			}
-			
-			
+						
 			data_list_add_string(dependencies_list,full_dependency_name);	
-		
-			scan_less_file_for_dependencies(full_dependency_name,dependencies_list);	
-					
+			//info_log("Call recursive: %d  %d", left_ptr, right_ptr);
+			scan_less_file_for_dependencies(full_dependency_name,dependencies_list,already_scanned);	
+			return 1;
 			free(full_dependency_name);
 				
 		}
 	}
+	return 0;
 }
 
 char* compiled_file_name(char* less_file_name){
@@ -453,25 +494,7 @@ static int less_handler(request_rec* r){
 
 	if (r->method_number != M_GET)
 	return HTTP_METHOD_NOT_ALLOWED;
-	
-	//just testing sorted list
-/*	data_list* list;
-
-	list = data_list_init();
-
-	data_list_add_number_sorted(list,1);
-	data_list_add_number_sorted(list,11);
-	data_list_add_number_sorted(list,15);
-	data_list_add_number_sorted(list,-350);
-	data_list_add_number_sorted(list, 275);
-	data_list_add_number_sorted(list,-15);
-	data_list_add_number_sorted(list,-7);
-	data_list_add_number_sorted(list,0);
-	data_list_print_members(list);return; */
-	
-	
-	
-	
+		
 	compile_file_name = compiled_file_name(r->filename);
 	asprintf(&command, "lessc %s > %s", r->filename, compile_file_name);
 	
@@ -488,11 +511,13 @@ static int less_handler(request_rec* r){
 	if (file_exists(compile_file_name)){
 		char* less_dir_name;
 		struct data_list* dependencies = data_list_init();
+		struct int_array* scanned_files = int_array_init();
 		
-		scan_less_file_for_dependencies(r->filename,dependencies);		
+		scan_less_file_for_dependencies(r->filename,dependencies,scanned_files);		
+			
+		//int_array_destroy(scanned_files);	
 			
 		if (needs_to_be_compiled(r->filename,dependencies)){
-			info_log("NEWER",NULL);
 			status = system(command);
 			if(status != 0){
 				free(compile_file_name);
@@ -527,8 +552,6 @@ static int less_handler(request_rec* r){
  
 static void register_hooks(apr_pool_t* pool){
     ap_hook_handler(less_handler, NULL, NULL, APR_HOOK_MIDDLE);
-	
-	
 }
  
 module AP_MODULE_DECLARE_DATA less_module = {
