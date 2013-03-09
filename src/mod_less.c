@@ -14,6 +14,18 @@
  * limitations under the License.
  */
 
+ /*
+  *  tosicnikola10@gmail.com : TODO: 
+  *  1) free dependencies list memory, there's memory leak right now
+  *  2) sometimes calloc() in number list causes failure, further investigate
+  *  3) filename shouldn't be just reversed file name, does not make any sense
+  *     filepath should affect cached file name
+  *  4) info_log writes to error file. Define different types of loggins
+  *  5) Improvement: Cache dependency maps using shm and/or mmap between requests. 
+  *     No need to parse all files upon each request (This modules is not intended for 
+  *     production use anyway, so this is lower priority
+  */
+ 
 #include "httpd.h"
 #include "http_config.h"
 #include "http_core.h"
@@ -342,11 +354,11 @@ int scan_less_file_for_dependencies(char* less_file_name,data_list* dependencies
 	}
 	
 	if(int_array_find(scanned_inodes,(int)file_info.st_ino) >= 0){
-		info_log("Skipped scanned file: %s with inode:%d", less_file_name,(int)file_info.st_ino);
+		//info_log("Skipped scanned file: %s with inode:%d", less_file_name,(int)file_info.st_ino);
 		return;
 	} else {
 		int_array_add(scanned_inodes, (int)file_info.st_ino);
-		info_log("Added file: %s with inode: %d", less_file_name,(int)file_info.st_ino);
+		//info_log("Added file: %s with inode: %d", less_file_name,(int)file_info.st_ino);
 	} 
 	
 	dirname = directory_name(less_file_name,0);
