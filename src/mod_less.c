@@ -16,10 +16,6 @@
 
  /*
   *  tosicnikola10@gmail.com : TODO: 
-  *  1) free dependencies list memory, there's memory leak right now
-  *  2) sometimes calloc() in number list causes failure, further investigate
-  *  3) filename shouldn't be just reversed file name, does not make any sense
-  *     filepath should affect cached file name
   *  4) info_log writes to error file. Define different types of loggins
   *  5) Improvement: Cache dependency maps using shm and/or mmap between requests. 
   *     No need to parse all files upon each request (This modules is not intended for 
@@ -41,11 +37,11 @@
 #include "apr_strings.h"
 #include "apr_hash.h"
 
-#include "md5.h"
 
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/shm.h>
+#include <openssl/md5.h>
 
 #define SHM_KEY 734253987
 #define MAP_NUMBER_OF_FILES
@@ -81,6 +77,10 @@ typedef struct int_array {
 	int initial_size;
 } int_array;
 
+unsigned char *MD5(const unsigned char *d, 
+                   unsigned long n,
+                   unsigned char *md);
+
 char static *source = NULL;
 const static server_rec  *server = NULL;
 
@@ -91,6 +91,7 @@ int_array* int_array_init(){
 	int_array* array;
 	
 	array = malloc(sizeof(int_array));
+	array->start = NULL;
 	array->size = 0;
 	array->used_size = 0;
 	array->initial_size = 8;
@@ -103,11 +104,20 @@ int_array* int_array_init(){
 **/
 int int_array_add(int_array* array, int number){
 	int new_size;
+	int* temp_newstart;
 	//info_log("IN. Used: %d. Size: %d",array->used_size,array->size);
 	if(array->size == array->used_size){
 		new_size = array->size == 0 ? array->initial_size : (array->size) *2;
 		//info_log("Extending buffer size to %d", new_size);
-		array->start = (int*) realloc(array->start,sizeof(int) * new_size );
+		temp_newstart = (int*) realloc(array->start,sizeof(int) * new_size );
+		if(temp_newstart == NULL){
+			if(array->start != NULL){
+				free(array->start);
+			}
+			temp_newstart = malloc(sizeof(int) * new_size);
+		} 
+		array->start = temp_newstart;
+				
 		if(array->start == NULL){
 			return -1;
 		}
@@ -186,8 +196,6 @@ void test_int_array(){
 	free(arr_str);
 }
 
-
-
 /*
 	Initialized data list. String lists are as simple as it gets, double linked lists with head & tail
 */
@@ -247,6 +255,7 @@ list_member* data_list_add_string(data_list* list, char* string){
 }
 
 
+
 void data_list_print_all(data_list* list,char* format_string){
 	list_member* member;
 	
@@ -258,6 +267,27 @@ void data_list_print_all(data_list* list,char* format_string){
 	do{
 		info_log(format_string,member->type == NUMBER ? member->data.number : member->data.string  );
 	}while((member = member->next) != NULL);
+}
+
+void data_list_destroy(data_list* list){
+	list_member* member;
+	
+	if(list == NULL) {		
+		return;
+	}
+	if(list->first == NULL) {
+		free(list);
+		return;
+	}
+	
+    member	= list->first;
+	do{
+		if(member->type == STRING){
+			free(member->data.string);
+		}
+	}while((member = member->next) != NULL);
+	free(list);
+	return;
 }
 
 /*
@@ -453,17 +483,20 @@ int detect_dependencies(int left_ptr,
 }
 
 char* compiled_file_name(char* less_file_name){
+
+	char md5sum[MD5_DIGEST_LENGTH];
+	char* full_name;
+	int i=0;
+	MD5(less_file_name,strlen(less_file_name), md5sum);
 	
-	char* file_name;	
-	char last_part[80];
-	int i = strlen(less_file_name);
-	int j = 0;
-	while( (last_part[j++] = less_file_name[--i]) != '/');
-	last_part[j-1]='\0';
+	char md5string[MD5_DIGEST_LENGTH * 2 +1];
+	for( i = 0; i < MD5_DIGEST_LENGTH; ++i){
+		sprintf(&md5string[i*2], "%02x", (unsigned int)md5sum[i]);
+	}
+	asprintf(&full_name,"/tmp/%s",md5string);
 	
-	asprintf(&file_name,"/tmp/%s_compiled.css",last_part);
-	info_log(file_name,NULL);
-	return file_name;
+	return full_name;
+	
 }
 
 int needs_to_be_compiled(char *less_file_name,data_list* list){
@@ -484,9 +517,9 @@ int needs_to_be_compiled(char *less_file_name,data_list* list){
 	
 	while(fresh && element != NULL){
 		//compiled file must be younger than file it depends on 
-		fresh = fresh && (stat((element->data).string,&depended_info)==0) && compiled_info.st_mtime > depended_info.st_mtime;
+		fresh = fresh && (stat((element->data).string,&depended_info)==0) && compiled_info.st_mtime > depended_info.st_mtime;		
+		if(!fresh) info_log("mod_less: Dependecy newer: %s",(element->data).string);
 		element = element->next;
-		if(!fresh) info_log("Dependecy newer: %s",(element->data).string);
 	}
 	return !fresh;
 }
@@ -528,36 +561,38 @@ static int less_handler(request_rec* r){
 		struct int_array* scanned_files = int_array_init();
 		
 		scan_less_file_for_dependencies(r->filename,dependencies,scanned_files);		
-			
-		//int_array_destroy(scanned_files);	
+		
+		int_array_destroy(scanned_files);	
 			
 		if (needs_to_be_compiled(r->filename,dependencies)){
 			status = system(command);
 			if(status != 0){
+				data_list_destroy(dependencies);
 				free(compile_file_name);
 				free(command);
 				return DECLINED;
 			}
 		}
-			
+	
+		//free memory taken
+		data_list_destroy(dependencies);
+		free(command);
+		
 		if ((source = read_file(compile_file_name)) != NULL){			
 			ap_set_content_type(r, "text/css");
-        	ap_rputs(source,r);
+        	ap_rputs(source,r);		
+			
 			free(source);
 			free(compile_file_name);
-			free(command);
 			return OK;
-
 		} else {
-
 			asprintf(&errornum, "%d", error);
 			ap_set_content_type(r, "text/css");
-        	ap_rputs(errornum,r);
-			free(source);
-			free(compile_file_name);
-			free(command);
-			return OK;
+        	ap_rputs(errornum,r);	
 
+			free(source);
+			free(compile_file_name);			
+			return OK;
 		}
 
 	}
